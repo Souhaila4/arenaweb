@@ -6,10 +6,10 @@
  * - Serveur (RSC, route handlers, etc.) : URL absolue vers le Nest.
  *
  * Variables :
- * - `NEXT_PUBLIC_API_URL` — URL du backend (ex. http://localhost:3000), lue partout
+ * - `NEXT_PUBLIC_API_URL` — URL du backend (ex. http://10.16.146.142:3000), lue partout
  * - `API_URL` — optionnel, prioritaire côté serveur uniquement (ex. http://backend:3000 en Docker)
  */
-const DEFAULT_BACKEND_ORIGIN = "http://127.0.0.1:3000";
+const DEFAULT_BACKEND_ORIGIN = "http://10.16.146.142:3000";
 
 export function getBackendOrigin(): string {
   if (typeof process === "undefined" || !process.env) {

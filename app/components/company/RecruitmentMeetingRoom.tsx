@@ -107,7 +107,10 @@ export default function RecruitmentMeetingRoom({
             formData.append("frame", blob, "frame.jpg");
 
             try {
-              const response = await fetch("http://localhost:5001/api/analyze-frame", {
+              const frameApiBase = (
+                process.env.NEXT_PUBLIC_SOFT_SKILLS_FRAME_API_URL ?? "http://10.16.146.142:5001"
+              ).replace(/\/+$/, "");
+              const response = await fetch(`${frameApiBase}/api/analyze-frame`, {
                 method: "POST",
                 body: formData,
               });

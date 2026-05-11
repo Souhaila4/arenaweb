@@ -72,7 +72,10 @@ export default function SoftSkillsAnalyzer({ candidateName, onAnalysisComplete }
       formData.append("name", candidateName || "Candidate");
 
       // Appel à l'API de soft skills
-      const response = await fetch("http://localhost:5000/api/analyze", {
+      const softSkillsBase = (
+        process.env.NEXT_PUBLIC_SOFT_SKILLS_API_URL ?? "http://10.16.146.142:5000"
+      ).replace(/\/+$/, "");
+      const response = await fetch(`${softSkillsBase}/api/analyze`, {
         method: "POST",
         body: formData,
       });
