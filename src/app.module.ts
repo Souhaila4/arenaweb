@@ -17,6 +17,8 @@ import { WalletModule } from './wallet/wallet.module';
 import { AntiCheatModule } from './anti-cheat/anti-cheat.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { EquipeModule } from './equipe/equipe.module';
+import { RecruitmentMeetingModule } from './recruitment-meeting/recruitment-meeting.module';
+import { BigQueryModule } from './bigquery/bigquery.module';
 import * as path from 'path';
 
 @Module({
@@ -73,6 +75,8 @@ import * as path from 'path';
     AntiCheatModule,
     AnalyticsModule,
     EquipeModule,
+    RecruitmentMeetingModule,
+    BigQueryModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -565,6 +565,66 @@ export class CompetitionService {
   }
 
   // ─────────────────────────────────────────────────────────────────
+  // DELETE — hard delete + escrow refund
+  // ─────────────────────────────────────────────────────────────────
+
+  async deleteCompetition(competitionId: string, user: any) {
+    const competition = await this.findCompetitionById(competitionId);
+
+    if (user.role === UserRole.COMPANY && competition.createdBy !== user.id) {
+      throw new ForbiddenException('You can only delete your own hackathons');
+    }
+
+    // Refund the locked escrow if a reward pool is still held
+    // (only if the competition has not been completed — winners must keep their reward).
+    const refundable =
+      (competition.rewardPool ?? 0) > 0 &&
+      competition.status !== CompetitionStatus.COMPLETED &&
+      competition.status !== CompetitionStatus.ARCHIVED;
+    if (refundable) {
+      try {
+        await this.walletService.refundEscrow(
+          competition.createdBy,
+          competition.rewardPool,
+          competitionId,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `[DELETE COMP ${competitionId}] Escrow refund failed: ${
+            err instanceof Error ? err.message : String(err)
+          }. Proceeding with deletion anyway.`,
+        );
+      }
+    }
+
+    // Detach transaction logs (audit trail must survive deletion)
+    // and delete child rows that don't cascade automatically (Mongo has no FKs).
+    await this.prisma.$transaction([
+      this.prisma.transactionLog.updateMany({
+        where: { competitionId },
+        data: { competitionId: null },
+      }),
+      this.prisma.competitionParticipant.deleteMany({
+        where: { competitionId },
+      }),
+      this.prisma.equipe.deleteMany({ where: { competitionId } }),
+      this.prisma.competition.delete({ where: { id: competitionId } }),
+    ]);
+
+    this.emitEvent('competition.deleted', {
+      competitionId,
+      title: competition.title,
+      refundedAmount: refundable ? competition.rewardPool : 0,
+    });
+
+    return {
+      success: true,
+      deletedId: competitionId,
+      refundedAmount: refundable ? competition.rewardPool : 0,
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────
   // TALENT METHODS
   // ─────────────────────────────────────────────────────────────────
 

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Param,
   Body,
   Query,
@@ -148,6 +149,27 @@ export class CompetitionController {
     @CurrentUser() user: any,
   ): Promise<unknown> {
     return this.competitionService.archiveCompetition(competitionId, user);
+  }
+
+  @Delete(':id')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.COMPANY)
+  @ApiOperation({
+    summary: 'Delete a hackathon (admin) — refunds locked escrow if any',
+    description:
+      'Permanently deletes a competition and all its children (participants, checkpoints, submissions, equipes, members, invitations). ' +
+      'If a reward pool is still locked in escrow (status != COMPLETED), it is refunded to the creator first. ' +
+      'TransactionLog rows are kept for audit but detached (competitionId set to null).',
+  })
+  @ApiParam({ name: 'id', description: 'MongoDB ObjectId of the competition' })
+  @ApiResponse({ status: 200, description: 'Competition deleted' })
+  @ApiResponse({ status: 403, description: 'Not the creator of this hackathon' })
+  @ApiResponse({ status: 404, description: 'Competition not found' })
+  async deleteCompetition(
+    @Param('id') competitionId: string,
+    @CurrentUser() user: any,
+  ): Promise<unknown> {
+    return this.competitionService.deleteCompetition(competitionId, user);
   }
 
   // ─────────────────────────────────────────────────────────────────

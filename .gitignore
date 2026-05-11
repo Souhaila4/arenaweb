@@ -60,6 +60,7 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 /generated/prisma
 
 firebase-service-account.json
+firebase-server-account.json
 .env
 
 # User uploads (local dev only; do not commit)

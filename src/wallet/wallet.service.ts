@@ -69,7 +69,64 @@ export class WalletService {
   //     This mints new tokens from the supply key and transfers them.
   // ─────────────────────────────────────────────────────────────────
 
-  async adminMintToCompany(userId: string, amount: number) {
+  /**
+   * Resolve a recipient company user from any of: userId, email, companyName.
+   * companyName lookups go through the most recent APPROVED CompanyRoleRequest.
+   */
+  async resolveCompanyUser(opts: {
+    userId?: string;
+    email?: string;
+    companyName?: string;
+  }): Promise<string> {
+    if (opts.userId) return opts.userId;
+
+    if (opts.email) {
+      const u = await this.prisma.user.findUnique({
+        where: { email: opts.email.toLowerCase() },
+        select: { id: true },
+      });
+      if (!u)
+        throw new NotFoundException(
+          `No user found with email ${opts.email}`,
+        );
+      return u.id;
+    }
+
+    if (opts.companyName) {
+      const req = await this.prisma.companyRoleRequest.findFirst({
+        where: {
+          companyName: opts.companyName,
+          status: 'APPROVED',
+        },
+        orderBy: { updatedAt: 'desc' },
+        select: { userId: true },
+      });
+      if (!req)
+        throw new NotFoundException(
+          `No approved company found with name "${opts.companyName}"`,
+        );
+      return req.userId;
+    }
+
+    throw new BadRequestException(
+      'Provide one of: userId, email, companyName',
+    );
+  }
+
+  async adminMintToCompany(
+    userId: string,
+    amount: number,
+    traceability?: {
+      reference?: string;
+      amountFiat?: number;
+      currency?: string;
+      paymentDate?: Date | string;
+      notes?: string;
+      proofUrl?: string;
+      proofFilePath?: string;
+      validatedByUserId?: string;
+    },
+  ) {
     // 1. Fetch company user + check they have a Hedera wallet
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -179,6 +236,40 @@ export class WalletService {
       hederaTransactionId: hederaTxId ?? undefined,
     });
 
+    // 4. Persist fiat-side traceability if any metadata was supplied
+    let traceabilityId: string | null = null;
+    const hasTraceability =
+      traceability &&
+      (traceability.reference ||
+        traceability.amountFiat !== undefined ||
+        traceability.currency ||
+        traceability.paymentDate ||
+        traceability.notes ||
+        traceability.proofUrl ||
+        traceability.proofFilePath);
+
+    if (hasTraceability) {
+      const trace = await this.prisma.creditTraceability.create({
+        data: {
+          userId,
+          amount,
+          transactionLogId: log.id,
+          reference: traceability!.reference,
+          amountFiat: traceability!.amountFiat,
+          currency: traceability!.currency,
+          paymentDate: traceability!.paymentDate
+            ? new Date(traceability!.paymentDate)
+            : undefined,
+          notes: traceability!.notes,
+          proofUrl: traceability!.proofUrl,
+          proofFilePath: traceability!.proofFilePath,
+          validatedByUserId: traceability!.validatedByUserId,
+        },
+        select: { id: true },
+      });
+      traceabilityId = trace.id;
+    }
+
     return {
       success: isSuccess,
       userId,
@@ -187,7 +278,128 @@ export class WalletService {
       newBalance: isSuccess ? user.walletBalance + amount : user.walletBalance,
       transactionLogId: log.id,
       hederaTransactionId: hederaTxId,
+      traceabilityId,
       ...(errorNote && { note: errorNote }),
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  MIRROR NODE — Read on-chain history straight from Hedera
+  // ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch on-chain token transfers for an account from the Hedera mirror
+   * node. Returns a normalized list including amount (human units), the
+   * counterparty account, consensus timestamp, transaction id, and a
+   * HashScan URL. Also attaches matching local TransactionLog metadata
+   * (e.g. competitionId, type, our internal status) by hederaTransactionId.
+   */
+  async getMirrorNodeAccountTransactions(
+    accountId: string,
+    opts: { limit?: number; tokenIdOverride?: string } = {},
+  ) {
+    const tokenId =
+      opts.tokenIdOverride ?? this.config.get<string>('ARENA_COIN_TOKEN_ID');
+    if (!tokenId) {
+      throw new InternalServerErrorException(
+        'ARENA_COIN_TOKEN_ID is not configured in .env',
+      );
+    }
+
+    const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
+    const base =
+      this.config.get<string>('HEDERA_MIRROR_NODE_URL') ??
+      'https://testnet.mirrornode.hedera.com';
+
+    const url = `${base}/api/v1/transactions?account.id=${encodeURIComponent(
+      accountId,
+    )}&limit=${limit}&order=desc&transactiontype=CRYPTOTRANSFER&result=success`;
+
+    let payload: {
+      transactions?: Array<{
+        transaction_id?: string;
+        consensus_timestamp?: string;
+        name?: string;
+        result?: string;
+        memo_base64?: string;
+        token_transfers?: Array<{
+          token_id: string;
+          account: string;
+          amount: number;
+        }>;
+      }>;
+    };
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(
+          `Mirror node responded ${res.status} ${res.statusText}`,
+        );
+      }
+      payload = (await res.json()) as typeof payload;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`[MIRROR] Fetch failed: ${msg}`);
+      throw new InternalServerErrorException(
+        `Failed to read from Hedera mirror node: ${msg}`,
+      );
+    }
+
+    // Keep only transactions that include a transfer of OUR token for THIS account
+    const filtered = (payload.transactions ?? []).flatMap((tx) => {
+      const transfers = (tx.token_transfers ?? []).filter(
+        (t) => t.token_id === tokenId && t.account === accountId,
+      );
+      if (!transfers.length) return [];
+      const atomic = transfers.reduce((sum, t) => sum + t.amount, 0);
+      return [
+        {
+          transactionId: tx.transaction_id ?? null,
+          consensusTimestamp: tx.consensus_timestamp ?? null,
+          amount: this.fromAtomicUnits(atomic),
+          direction: atomic >= 0 ? ('IN' as const) : ('OUT' as const),
+          tokenId,
+          memo: tx.memo_base64
+            ? Buffer.from(tx.memo_base64, 'base64').toString('utf8')
+            : null,
+          hashScanUrl: tx.transaction_id
+            ? `https://hashscan.io/testnet/transaction/${tx.transaction_id}`
+            : null,
+        },
+      ];
+    });
+
+    // Enrich with our local TransactionLog when we have a match
+    const ids = filtered
+      .map((t) => t.transactionId)
+      .filter((id): id is string => !!id);
+    const logs = ids.length
+      ? await this.prisma.transactionLog.findMany({
+          where: { hederaTransactionId: { in: ids } },
+          select: {
+            id: true,
+            type: true,
+            status: true,
+            competitionId: true,
+            hederaTransactionId: true,
+            errorNote: true,
+          },
+        })
+      : [];
+    const logByTxId = new Map(
+      logs.map((l) => [l.hederaTransactionId, l] as const),
+    );
+
+    return {
+      source: 'hedera-mirror-node',
+      mirrorUrl: url,
+      accountId,
+      tokenId,
+      count: filtered.length,
+      transactions: filtered.map((t) => ({
+        ...t,
+        localLog: t.transactionId ? logByTxId.get(t.transactionId) ?? null : null,
+      })),
     };
   }
 

@@ -137,6 +137,9 @@ model User {
   notifications        Notification[]
   companyRoleRequests  CompanyRoleRequest[]
   certificates         Certificate[]
+  creditTraceabilities CreditTraceability[]
+  meetingsAsCompany    RecruitmentMeeting[]      @relation("MeetingsCompany")
+  meetingsAsCandidate  RecruitmentMeeting[]      @relation("MeetingsCandidate")
 
   // ───── Equipe Relations ─────
   equipeMembers        EquipeMember[]
@@ -503,5 +506,87 @@ model TransactionLog {
   @@index([senderAccountId])
   @@index([competitionId])
   @@index([type])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// CreditTraceability — fiat → Arena Coin admin credit audit trail
+// One row per admin "Valider crédit + mint" submission, linked to
+// the on-chain TransactionLog produced by the mint.
+// ─────────────────────────────────────────────────────────────────
+model CreditTraceability {
+  id                  String   @id @default(auto()) @map("_id") @db.ObjectId
+
+  // Beneficiary (company)
+  userId              String   @db.ObjectId
+  user                User     @relation(fields: [userId], references: [id])
+
+  // Arena coin amount minted (matches TransactionLog.amount)
+  amount              Float
+
+  // Linked mint transaction
+  transactionLogId    String?  @db.ObjectId
+
+  // Fiat traceability metadata (all optional — captured from admin form)
+  reference           String?  // bank transfer / payment reference
+  amountFiat          Float?
+  currency            String?  // e.g. "EUR", "TND", "USD"
+  paymentDate         DateTime?
+  notes               String?
+  proofUrl            String?  // external proof URL
+  proofFilePath       String?  // local uploaded justificatif
+
+  // Admin who validated
+  validatedByUserId   String?  @db.ObjectId
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([userId])
+  @@index([transactionLogId])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// RECRUITMENT MEETING — Company ↔ Candidate scheduled interview
+// with soft-skills analysis in the meeting room.
+// ─────────────────────────────────────────────────────────────────
+enum RecruitmentMeetingStatus {
+  SCHEDULED
+  STARTED
+  COMPLETED
+  CANCELLED
+}
+
+model RecruitmentMeeting {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+
+  // Company side
+  companyUserId    String   @db.ObjectId
+  company          User     @relation("MeetingsCompany", fields: [companyUserId], references: [id])
+  companyName      String   // snapshot at scheduling time
+
+  // Candidate side
+  candidateUserId  String   @db.ObjectId
+  candidate        User     @relation("MeetingsCandidate", fields: [candidateUserId], references: [id])
+  candidateEmail   String   // snapshot — used to send the invite
+  candidateName    String   // snapshot — "Firstname Lastname"
+
+  // Schedule
+  scheduledFor     DateTime
+  durationMinutes  Int      @default(30)
+  notes            String?
+
+  status           RecruitmentMeetingStatus @default(SCHEDULED)
+
+  // Soft-skills final score (saved when meeting ends)
+  softSkillsScore  Json?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([companyUserId])
+  @@index([candidateUserId])
+  @@index([scheduledFor])
   @@index([status])
 }

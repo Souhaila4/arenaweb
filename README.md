@@ -137,7 +137,7 @@ GITHUB_TOKEN="your_github_personal_access_token"
 
 # App
 PORT=3000
-FRONTEND_URL="http://localhost:3001"
+FRONTEND_URL="http://10.16.146.142:3001"
 ```
 
 ---
@@ -171,7 +171,7 @@ npm run build
 npm run start:prod
 ```
 
-The API will be available at **http://localhost:3000**.
+The API will be available at **http://10.16.146.142:3000** (or `http://localhost:3000` on the same machine).
 
 ---
 
@@ -180,7 +180,7 @@ The API will be available at **http://localhost:3000**.
 Swagger UI is available at:
 
 ```
-http://localhost:3000/api
+http://10.16.146.142:3000/api
 ```
 
 ---

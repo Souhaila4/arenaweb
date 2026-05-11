@@ -20,12 +20,14 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "seed": "prisma db seed",
-    "create-arena-coin": "npx ts-node scripts/create-arena-coin.ts"
+    "create-arena-coin": "npx ts-node scripts/create-arena-coin.ts",
+    "cert-template": "npx ts-node scripts/generate-cert-template.ts"
   },
   "dependencies": {
     "@bull-board/api": "^6.21.1",
     "@bull-board/express": "^6.21.1",
     "@bull-board/nestjs": "^6.21.1",
+    "@google-cloud/bigquery": "^8.3.0",
     "@gradio/client": "^2.0.4",
     "@hashgraph/sdk": "^2.81.0",
     "@nestjs/bullmq": "^11.0.4",

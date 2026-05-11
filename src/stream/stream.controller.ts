@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
@@ -135,6 +136,18 @@ export class StreamController {
     @Param('competitionId') competitionId: string,
     @CurrentUser() user: User,
   ): Promise<{ ok: boolean }> {
+    const isObjectId = (s: string) => /^[a-f0-9]{24}$/i.test(s);
+    if (!equipeId || !isObjectId(equipeId)) {
+      throw new BadRequestException(
+        `Paramètre equipeId invalide (reçu: "${equipeId}"). Reconnectez-vous depuis la page du hackathon.`,
+      );
+    }
+    if (!competitionId || !isObjectId(competitionId)) {
+      throw new BadRequestException(
+        `Paramètre competitionId invalide (reçu: "${competitionId}").`,
+      );
+    }
+
     // Vérifier que l'utilisateur fait bien partie de cette équipe
     const membership = await this.prisma.equipeMember.findFirst({
       where: { equipeId, userId: user.id },

@@ -21,7 +21,7 @@ export class AnalyticsController {
       tier: 'PRO',
       developers: data.developers,
       total: data.total,
-      _source: 'database',
+      _source: data.source,
     };
   }
 }

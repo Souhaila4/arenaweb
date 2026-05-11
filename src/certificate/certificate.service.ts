@@ -148,6 +148,92 @@ export class CertificateService {
   }
 
   // ─────────────────────────────────────────────────────────────────
+  //  ADMIN — Resolve a recipient user by userId OR email,
+  //          then mint a certificate NFT for them.
+  // ─────────────────────────────────────────────────────────────────
+  async resolveUserId(opts: { userId?: string; email?: string }): Promise<string> {
+    if (opts.userId) return opts.userId;
+    if (opts.email) {
+      const u = await this.prisma.user.findUnique({
+        where: { email: opts.email.toLowerCase() },
+        select: { id: true },
+      });
+      if (!u) throw new NotFoundException(`No user found with email ${opts.email}`);
+      return u.id;
+    }
+    throw new NotFoundException('Provide userId or email');
+  }
+
+  async adminGenerateForUser(
+    opts: { userId?: string; email?: string },
+    hackathonName: string,
+  ) {
+    const targetId = await this.resolveUserId(opts);
+    return this.generateCertificateNFT(targetId, hackathonName);
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  ADMIN — List every certificate already minted (most recent first).
+  //          Used by the dashboard "voir les certificats émis" button.
+  // ─────────────────────────────────────────────────────────────────
+  async listAllCertificates(opts: { limit?: number; q?: string } = {}) {
+    const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
+    const q = opts.q?.trim();
+
+    const whereUser = q
+      ? {
+          OR: [
+            { firstName: { contains: q, mode: 'insensitive' as const } },
+            { lastName: { contains: q, mode: 'insensitive' as const } },
+            { email: { contains: q, mode: 'insensitive' as const } },
+          ],
+        }
+      : undefined;
+
+    const certs = await this.prisma.certificate.findMany({
+      where: q
+        ? {
+            OR: [
+              { hackathonName: { contains: q, mode: 'insensitive' as const } },
+              { tokenId: { contains: q, mode: 'insensitive' as const } },
+              ...(whereUser ? [{ user: whereUser }] : []),
+            ],
+          }
+        : undefined,
+      orderBy: { mintedAt: 'desc' },
+      take: limit,
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            hederaAccountId: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    });
+
+    return {
+      total: certs.length,
+      certificates: certs.map((c) => ({
+        id: c.id,
+        hackathonName: c.hackathonName,
+        tokenId: c.tokenId,
+        serial: c.serial,
+        imageIpfsUrl: c.imageIpfsUrl,
+        metadataUrl: c.metadataUrl,
+        transferredToWallet: c.transferredToWallet,
+        recipientAccountId: c.recipientAccountId,
+        mintedAt: c.mintedAt,
+        user: c.user,
+      })),
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────
   //  STEP 1 — Generate image with Sharp + SVG overlay
   // ─────────────────────────────────────────────────────────────────
   private async generateImage(
