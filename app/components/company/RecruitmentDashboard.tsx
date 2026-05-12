@@ -5,7 +5,12 @@ import Link from "next/link";
 import {
   scheduleRecruitmentMeeting,
   listMyCompanyMeetings,
+  addFavorite,
+  removeFavorite,
+  getFavoriteIds,
+  getMyFavorites,
   type RecruitmentMeeting,
+  type FavoriteEntry,
 } from "@/app/lib/api";
 
 interface Developer {
@@ -36,7 +41,7 @@ const SPECIALTY_GRADIENT: Record<string, string> = {
   BI: "from-yellow-500/30 to-amber-500/20",
 };
 
-type RecruitmentView = "TALENTS" | "MEETINGS";
+type RecruitmentView = "TALENTS" | "MEETINGS" | "FAVORITES";
 
 export default function RecruitmentDashboard() {
   const [view, setView] = useState<RecruitmentView>("TALENTS");
@@ -46,6 +51,12 @@ export default function RecruitmentDashboard() {
   const [selectedDeveloper, setSelectedDeveloper] = useState<Developer | null>(null);
   const [developers, setDevelopers] = useState<Developer[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Favorites state
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
+  const [togglingFavorites, setTogglingFavorites] = useState<Set<string>>(new Set());
+  const [favoritesList, setFavoritesList] = useState<FavoriteEntry[]>([]);
+  const [favoritesLoading, setFavoritesLoading] = useState(false);
 
   // Meetings tab data
   const [meetings, setMeetings] = useState<RecruitmentMeeting[]>([]);
@@ -102,7 +113,21 @@ export default function RecruitmentDashboard() {
 
   useEffect(() => {
     if (view === "MEETINGS") loadMeetings();
+    if (view === "FAVORITES") {
+      setFavoritesLoading(true);
+      getMyFavorites()
+        .then((entries) => setFavoritesList(entries))
+        .catch(() => setFavoritesList([]))
+        .finally(() => setFavoritesLoading(false));
+    }
   }, [view]);
+
+  // Load the lightweight ID set on mount so cards can show their heart state immediately
+  useEffect(() => {
+    getFavoriteIds()
+      .then((ids) => setFavoriteIds(new Set(ids)))
+      .catch(() => { /* user might not be COMPANY role yet — ignore */ });
+  }, []);
 
   const mockDevelopers: Developer[] = useMemo(() => [
     { id: "1", firstName: "Ahmed", lastName: "Mohammed", email: "ahmed@example.com", mainSpecialty: "FULLSTACK", skillTags: ["React", "Node.js", "PostgreSQL", "Docker"], totalChallenges: 45, totalWins: 32, winRate: 71, avgScore: 8.7, avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Ahmed" },
@@ -196,6 +221,41 @@ export default function RecruitmentDashboard() {
     }
   };
 
+  const handleToggleFavorite = async (userId: string) => {
+    if (!isValidObjectId(userId)) return;
+    const wasFavorited = favoriteIds.has(userId);
+
+    // Optimistic UI update
+    setFavoriteIds((prev) => {
+      const next = new Set(prev);
+      if (wasFavorited) next.delete(userId); else next.add(userId);
+      return next;
+    });
+    setTogglingFavorites((prev) => new Set([...prev, userId]));
+
+    try {
+      if (wasFavorited) {
+        await removeFavorite(userId);
+        setFavoritesList((prev) => prev.filter((e) => e.user.id !== userId));
+      } else {
+        await addFavorite(userId);
+      }
+    } catch {
+      // Roll back on error
+      setFavoriteIds((prev) => {
+        const next = new Set(prev);
+        if (wasFavorited) next.add(userId); else next.delete(userId);
+        return next;
+      });
+    } finally {
+      setTogglingFavorites((prev) => {
+        const next = new Set(prev);
+        next.delete(userId);
+        return next;
+      });
+    }
+  };
+
   // ──────────────────────────────────────────────────────────────
 
   return (
@@ -234,6 +294,19 @@ export default function RecruitmentDashboard() {
             }`}
           >
             Mes Meetings
+          </button>
+          <button
+            onClick={() => setView("FAVORITES")}
+            className={`relative px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
+              view === "FAVORITES" ? "bg-rose-500 text-white shadow-lg shadow-rose-500/20" : "text-white/50 hover:text-white"
+            }`}
+          >
+            Favoris
+            {favoriteIds.size > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[8px] font-black flex items-center justify-center border border-black/30">
+                {favoriteIds.size}
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -316,6 +389,9 @@ export default function RecruitmentDashboard() {
                   key={dev.id}
                   dev={dev}
                   onView={() => setSelectedDeveloper(dev)}
+                  isFavorited={favoriteIds.has(dev.id)}
+                  isToggling={togglingFavorites.has(dev.id)}
+                  onToggleFavorite={() => handleToggleFavorite(dev.id)}
                 />
               ))}
             </div>
@@ -377,6 +453,77 @@ export default function RecruitmentDashboard() {
                 </li>
               ))}
             </ul>
+          )}
+        </div>
+      )}
+
+      {/* ─── FAVORITES view ─── */}
+      {view === "FAVORITES" && (
+        <div className="space-y-6">
+          {/* Header */}
+          <div className="flex items-center gap-3">
+            <div className="shrink-0 w-9 h-9 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center">
+              <svg className="w-5 h-5 text-rose-400" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+              </svg>
+            </div>
+            <div>
+              <p className="text-[10px] font-black tracking-[0.3em] text-rose-400 uppercase">Mes favoris</p>
+              <p className="text-sm text-white/40 leading-none mt-0.5">{favoritesList.length} talent{favoritesList.length !== 1 ? "s" : ""} sauvegardé{favoritesList.length !== 1 ? "s" : ""}</p>
+            </div>
+          </div>
+
+          {favoritesLoading ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-3">
+              <div className="w-10 h-10 border-2 border-rose-400/30 border-t-rose-400 rounded-full animate-spin" />
+              <p className="text-[10px] font-black tracking-[0.3em] text-white/40 uppercase">Chargement…</p>
+            </div>
+          ) : favoritesList.length === 0 ? (
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-12 text-center space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mx-auto">
+                <svg className="w-6 h-6 text-rose-400/50" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+                </svg>
+              </div>
+              <p className="text-white/60 font-black italic uppercase tracking-tight">Aucun favori pour l'instant</p>
+              <p className="text-[10px] text-white/30 uppercase tracking-widest">
+                Clique sur le cœur d'un talent dans l'onglet Talents pour l'ajouter ici.
+              </p>
+              <button
+                onClick={() => setView("TALENTS")}
+                className="mt-2 inline-block px-5 py-2 rounded-xl bg-rose-500/10 border border-rose-500/30 text-[10px] font-black uppercase tracking-widest text-rose-300 hover:bg-rose-500/20 transition-all"
+              >
+                Explorer les talents →
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {favoritesList.map(({ favoriteId, user }) => {
+                const dev: Developer = {
+                  id: user.id,
+                  firstName: user.firstName,
+                  lastName: user.lastName,
+                  email: user.email,
+                  mainSpecialty: user.mainSpecialty ?? "—",
+                  skillTags: user.skillTags,
+                  totalChallenges: user.totalChallenges,
+                  totalWins: user.totalWins,
+                  winRate: user.totalChallenges > 0 ? Math.round((user.totalWins / user.totalChallenges) * 100) : 0,
+                  avgScore: 0,
+                  avatarUrl: user.avatarUrl ?? `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.firstName}`,
+                };
+                return (
+                  <DeveloperCard
+                    key={favoriteId}
+                    dev={dev}
+                    onView={() => setSelectedDeveloper(dev)}
+                    isFavorited
+                    isToggling={togglingFavorites.has(user.id)}
+                    onToggleFavorite={() => handleToggleFavorite(user.id)}
+                  />
+                );
+              })}
+            </div>
           )}
         </div>
       )}
@@ -448,8 +595,19 @@ export default function RecruitmentDashboard() {
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                   Start Meeting
                 </button>
-                <button className="flex-1 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-black uppercase tracking-[0.2em] text-white/60 hover:text-white transition-all">
-                  Recruter
+                <button
+                  onClick={() => handleToggleFavorite(selectedDeveloper.id)}
+                  disabled={!isValidObjectId(selectedDeveloper.id) || togglingFavorites.has(selectedDeveloper.id)}
+                  title={favoriteIds.has(selectedDeveloper.id) ? "Retirer des favoris" : "Ajouter aux favoris"}
+                  className={`w-12 shrink-0 flex items-center justify-center rounded-xl border transition-all ${
+                    favoriteIds.has(selectedDeveloper.id)
+                      ? "bg-rose-500/20 border-rose-500/40 text-rose-400 hover:bg-rose-500/30"
+                      : "bg-white/5 border-white/10 text-white/40 hover:border-rose-500/40 hover:text-rose-400"
+                  } disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  <svg className="w-5 h-5" fill={favoriteIds.has(selectedDeveloper.id) ? "currentColor" : "none"} stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+                  </svg>
                 </button>
               </div>
             </div>
@@ -625,19 +783,53 @@ function Metric({
   );
 }
 
-function DeveloperCard({ dev, onView }: { dev: Developer; onView: () => void }) {
+function DeveloperCard({
+  dev,
+  onView,
+  isFavorited = false,
+  isToggling = false,
+  onToggleFavorite,
+}: {
+  dev: Developer;
+  onView: () => void;
+  isFavorited?: boolean;
+  isToggling?: boolean;
+  onToggleFavorite?: () => void;
+}) {
   return (
-    <button
-      onClick={onView}
-      className="text-left rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-5 hover:border-cyan-500/30 hover:bg-white/[0.05] transition-all group"
-    >
+    <div className={`relative rounded-2xl border bg-white/[0.03] backdrop-blur-xl p-5 transition-all group ${
+      isFavorited ? "border-rose-500/20 hover:border-rose-500/40" : "border-white/10 hover:border-cyan-500/30 hover:bg-white/[0.05]"
+    }`}>
+      {/* Heart button — top-right overlay */}
+      {onToggleFavorite && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleFavorite(); }}
+          disabled={isToggling}
+          title={isFavorited ? "Retirer des favoris" : "Ajouter aux favoris"}
+          className={`absolute top-3 right-3 w-8 h-8 rounded-lg flex items-center justify-center transition-all z-10 ${
+            isFavorited
+              ? "bg-rose-500/20 border border-rose-500/30 text-rose-400 hover:bg-rose-500/30"
+              : "bg-white/5 border border-white/10 text-white/20 hover:text-rose-400 hover:border-rose-500/30 hover:bg-rose-500/10 opacity-0 group-hover:opacity-100"
+          } disabled:opacity-40 disabled:cursor-not-allowed`}
+        >
+          {isToggling ? (
+            <span className="w-3 h-3 border border-rose-400/50 border-t-rose-400 rounded-full animate-spin block" />
+          ) : (
+            <svg className="w-4 h-4" fill={isFavorited ? "currentColor" : "none"} stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+            </svg>
+          )}
+        </button>
+      )}
+
+      <button onClick={onView} className="w-full text-left">
       <div className="flex items-start gap-3">
         <img
           src={dev.avatarUrl}
           alt=""
           className={`w-12 h-12 rounded-xl border-2 border-cyan-500/20 bg-gradient-to-br ${SPECIALTY_GRADIENT[dev.mainSpecialty] || "from-cyan-500/30 to-blue-500/20"} group-hover:scale-105 transition-transform shrink-0`}
         />
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 pr-8">
           <span className="inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest bg-cyan-500/15 text-cyan-300 border border-cyan-500/20 mb-1.5">
             {dev.mainSpecialty}
           </span>
@@ -674,6 +866,7 @@ function DeveloperCard({ dev, onView }: { dev: Developer; onView: () => void }) 
         Voir profil
         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7"/></svg>
       </div>
-    </button>
+      </button>
+    </div>
   );
 }

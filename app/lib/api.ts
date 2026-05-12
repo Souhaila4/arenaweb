@@ -978,3 +978,51 @@ export async function cancelMeeting(id: string): Promise<{ id: string; status: R
   const res = await request(`/recruitment-meeting/${encodeURIComponent(id)}/cancel`, { method: 'PATCH' });
   return res as any;
 }
+
+// ─────────────────────────────────────────────────────────────────
+// FAVORITES
+// ─────────────────────────────────────────────────────────────────
+
+export interface FavoriteUserProfile {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  avatarUrl?: string | null;
+  mainSpecialty?: string | null;
+  skillTags: string[];
+  totalChallenges: number;
+  totalWins: number;
+  githubUrl?: string | null;
+  linkedinUrl?: string | null;
+}
+
+export interface FavoriteEntry {
+  favoriteId: string;
+  favoritedAt: string;
+  user: FavoriteUserProfile;
+}
+
+/** Add a talent to favorites (idempotent). */
+export async function addFavorite(userId: string): Promise<FavoriteEntry> {
+  const res = await request(`/favorites/${encodeURIComponent(userId)}`, { method: 'POST' });
+  return res as unknown as FavoriteEntry;
+}
+
+/** Remove a talent from favorites. */
+export async function removeFavorite(userId: string): Promise<{ ok: boolean }> {
+  const res = await request(`/favorites/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+  return res as unknown as { ok: boolean };
+}
+
+/** Get the full list of favorited users with enriched profiles. */
+export async function getMyFavorites(): Promise<FavoriteEntry[]> {
+  const res = await request('/favorites', { method: 'GET' });
+  return res as unknown as FavoriteEntry[];
+}
+
+/** Get only the set of favorited user IDs (lightweight). */
+export async function getFavoriteIds(): Promise<string[]> {
+  const res = await request('/favorites/ids', { method: 'GET' });
+  return res as unknown as string[];
+}
