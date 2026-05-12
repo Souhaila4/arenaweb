@@ -8,8 +8,13 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
-import { RecruitmentMeetingStatus, UserRole } from '@prisma/client';
-import { ScheduleMeetingDto, CompleteMeetingDto } from './recruitment-meeting.dto';
+import { RecruitmentMeetingStatus, RecruitmentDecision, UserRole } from '@prisma/client';
+import {
+  ScheduleMeetingDto,
+  CompleteMeetingDto,
+  ReviewMeetingDto,
+  RecruitmentDecisionDto,
+} from './recruitment-meeting.dto';
 
 @Injectable()
 export class RecruitmentMeetingService {
@@ -187,6 +192,11 @@ export class RecruitmentMeetingService {
       notes: m.notes,
       status: m.status,
       softSkillsScore: m.softSkillsScore,
+      recruiterScore: m.recruiterScore,
+      decision: m.decision,
+      decisionNote: m.decisionNote,
+      reviewedAt: m.reviewedAt,
+      resultEmailedAt: m.resultEmailedAt,
       company: m.company,
       candidate: m.candidate,
       role:
@@ -259,6 +269,108 @@ export class RecruitmentMeetingService {
       select: { id: true, status: true },
     });
   }
+
+  // ─────────────────────────────────────────────────────────────────
+  // RECRUITER REVIEW — record the recruiter's own score + decision,
+  // optionally email the candidate the comparison + verdict.
+  // ─────────────────────────────────────────────────────────────────
+  async review(meetingId: string, recruiterUserId: string, dto: ReviewMeetingDto) {
+    const m = await this.prisma.recruitmentMeeting.findUnique({
+      where: { id: meetingId },
+    });
+    if (!m) throw new NotFoundException('Meeting not found');
+    if (m.companyUserId !== recruiterUserId) {
+      throw new ForbiddenException(
+        'Only the recruiting company can submit a review',
+      );
+    }
+
+    const decision: RecruitmentDecision =
+      dto.decision === RecruitmentDecisionDto.HIRE ? 'HIRE' : 'REJECT';
+
+    const updated = await this.prisma.recruitmentMeeting.update({
+      where: { id: meetingId },
+      data: {
+        recruiterScore: dto.recruiterScore as any,
+        decision,
+        decisionNote: dto.decisionNote,
+        reviewedAt: new Date(),
+      },
+    });
+
+    // Email the candidate by default unless explicitly disabled
+    const shouldEmail = dto.sendEmail !== false;
+    if (shouldEmail) {
+      try {
+        await this.email.sendCustomHtmlEmail(
+          updated.candidateEmail,
+          decision === 'HIRE'
+            ? `🎉 Your interview at ${updated.companyName} — Great news`
+            : `Update from ${updated.companyName} — Interview feedback`,
+          renderResultEmail({
+            companyName: updated.companyName,
+            candidateFirstName: updated.candidateName.split(' ')[0] || 'there',
+            decision,
+            decisionNote: updated.decisionNote,
+            softSkillsScore: (updated.softSkillsScore as Record<string, number> | null) ?? null,
+            recruiterScore: (updated.recruiterScore as Record<string, number> | null) ?? null,
+          }),
+        );
+        await this.prisma.recruitmentMeeting.update({
+          where: { id: meetingId },
+          data: { resultEmailedAt: new Date() },
+        });
+      } catch (err) {
+        this.logger.error(
+          `Failed to send result email for meeting ${meetingId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    return {
+      id: updated.id,
+      decision: updated.decision,
+      reviewedAt: updated.reviewedAt,
+      resultEmailedAt: shouldEmail ? new Date() : null,
+      recruiterScore: updated.recruiterScore,
+      softSkillsScore: updated.softSkillsScore,
+      comparison: buildComparison(
+        (updated.softSkillsScore as Record<string, number> | null) ?? null,
+        (updated.recruiterScore as Record<string, number> | null) ?? null,
+      ),
+    };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Comparison helper — computes per-skill deltas between AI and recruiter,
+// plus a simple aggregate (mean), to surface in the UI and email.
+// ─────────────────────────────────────────────────────────────────
+function buildComparison(
+  ai: Record<string, number> | null,
+  recruiter: Record<string, number> | null,
+) {
+  if (!ai && !recruiter) return null;
+  const keys = Array.from(
+    new Set([...Object.keys(ai ?? {}), ...Object.keys(recruiter ?? {})]),
+  );
+  const perSkill = keys.map((k) => {
+    const a = Number(ai?.[k] ?? 0);
+    const r = Number(recruiter?.[k] ?? 0);
+    return { skill: k, ai: a, recruiter: r, delta: Math.round((r - a) * 10) / 10 };
+  });
+  const avg = (arr: number[]) =>
+    arr.length ? Math.round((arr.reduce((s, x) => s + x, 0) / arr.length) * 10) / 10 : 0;
+  const aiAvg = avg(perSkill.map((x) => x.ai));
+  const recruiterAvg = avg(perSkill.map((x) => x.recruiter));
+  return {
+    perSkill,
+    aiAverage: aiAvg,
+    recruiterAverage: recruiterAvg,
+    averageDelta: Math.round((recruiterAvg - aiAvg) * 10) / 10,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -339,4 +451,111 @@ function escapeHtml(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Result email — sent after the recruiter submits their review.
+// Shows AI vs recruiter side-by-side per skill, then the verdict.
+// ─────────────────────────────────────────────────────────────────
+function renderResultEmail(opts: {
+  companyName: string;
+  candidateFirstName: string;
+  decision: 'HIRE' | 'REJECT';
+  decisionNote?: string | null;
+  softSkillsScore: Record<string, number> | null;
+  recruiterScore: Record<string, number> | null;
+}): string {
+  const { companyName, candidateFirstName, decision, decisionNote, softSkillsScore, recruiterScore } = opts;
+  const cmp = buildComparison(softSkillsScore, recruiterScore);
+  const isHire = decision === 'HIRE';
+  const accent = isHire ? '#10b981' : '#ef4444';
+  const accentSoft = isHire ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)';
+  const accentBorder = isHire ? 'rgba(16,185,129,0.4)' : 'rgba(239,68,68,0.4)';
+  const headline = isHire ? "Great news from your interview" : "Update from your interview";
+  const verdictText = isHire
+    ? `${companyName} would like to move forward with you.`
+    : `${companyName} has decided not to move forward at this time.`;
+  const verdictBadge = isHire ? '🎉 SHORTLISTED' : 'NOT SELECTED';
+
+  const labelize = (k: string) =>
+    k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+  const skillRows = (cmp?.perSkill ?? [])
+    .map((s) => {
+      const deltaColor = s.delta > 0 ? '#10b981' : s.delta < 0 ? '#ef4444' : '#94a3b8';
+      const deltaSign = s.delta > 0 ? '+' : '';
+      return `
+        <tr>
+          <td style="padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); color: #cbd5e1; font-size: 13px;">${labelize(s.skill)}</td>
+          <td style="padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); color: #00d4ff; font-family: monospace; font-weight: 700; text-align: right; font-size: 13px;">${s.ai.toFixed(1)}</td>
+          <td style="padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); color: #a78bfa; font-family: monospace; font-weight: 700; text-align: right; font-size: 13px;">${s.recruiter.toFixed(1)}</td>
+          <td style="padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); color: ${deltaColor}; font-family: monospace; font-weight: 700; text-align: right; font-size: 12px;">${deltaSign}${s.delta.toFixed(1)}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  return `
+    <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; padding: 24px; background: #0a0f1a; color: #ffffff;">
+      <div style="background: linear-gradient(135deg, #0d1a2d 0%, #0a0f1a 100%); border: 1px solid ${accentBorder}; border-radius: 16px; padding: 32px;">
+        <p style="color: ${accent}; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; font-weight: 900; margin: 0 0 8px;">Arena of Coders · Interview result</p>
+        <h1 style="color: #ffffff; font-size: 26px; font-weight: 900; font-style: italic; text-transform: uppercase; margin: 0 0 16px; letter-spacing: -1px;">${headline}</h1>
+
+        <p style="color: #cbd5e1; font-size: 14px; line-height: 1.6; margin: 0 0 24px;">
+          Hi <strong style="color: #ffffff;">${escapeHtml(candidateFirstName)}</strong>, thanks again for your time. ${escapeHtml(verdictText)}
+        </p>
+
+        <div style="background: ${accentSoft}; border: 1px solid ${accentBorder}; border-radius: 12px; padding: 18px 20px; margin: 24px 0; text-align: center;">
+          <p style="color: ${accent}; font-size: 12px; letter-spacing: 4px; text-transform: uppercase; font-weight: 900; margin: 0;">${verdictBadge}</p>
+        </div>
+
+        ${
+          decisionNote
+            ? `<div style="background: rgba(255,255,255,0.03); border-left: 3px solid ${accentBorder}; padding: 12px 16px; margin: 24px 0;">
+                 <p style="color: #94a3b8; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; font-weight: 700; margin: 0 0 6px;">Message from ${escapeHtml(companyName)}</p>
+                 <p style="color: #cbd5e1; font-size: 14px; line-height: 1.55; margin: 0; white-space: pre-wrap;">${escapeHtml(decisionNote)}</p>
+               </div>`
+            : ''
+        }
+
+        ${
+          cmp
+            ? `
+        <p style="color: #00d4ff; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; font-weight: 900; margin: 32px 0 12px;">Soft-skills evaluation</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 0;">
+          <thead>
+            <tr>
+              <th style="padding: 8px; text-align: left; color: #64748b; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; font-weight: 800;">Skill</th>
+              <th style="padding: 8px; text-align: right; color: #64748b; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; font-weight: 800;">AI</th>
+              <th style="padding: 8px; text-align: right; color: #64748b; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; font-weight: 800;">Recruiter</th>
+              <th style="padding: 8px; text-align: right; color: #64748b; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; font-weight: 800;">Δ</th>
+            </tr>
+          </thead>
+          <tbody>${skillRows}</tbody>
+          <tfoot>
+            <tr>
+              <td style="padding: 12px 8px; color: #ffffff; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px;">Average</td>
+              <td style="padding: 12px 8px; color: #00d4ff; font-family: monospace; font-weight: 900; text-align: right;">${cmp.aiAverage.toFixed(1)}</td>
+              <td style="padding: 12px 8px; color: #a78bfa; font-family: monospace; font-weight: 900; text-align: right;">${cmp.recruiterAverage.toFixed(1)}</td>
+              <td style="padding: 12px 8px; color: ${cmp.averageDelta >= 0 ? '#10b981' : '#ef4444'}; font-family: monospace; font-weight: 900; text-align: right;">${cmp.averageDelta >= 0 ? '+' : ''}${cmp.averageDelta.toFixed(1)}</td>
+            </tr>
+          </tfoot>
+        </table>
+        <p style="color: #64748b; font-size: 11px; line-height: 1.5; margin: 16px 0 0;">
+          <strong>AI</strong> = real-time soft-skills snapshot captured by Arena's AI during the meeting. <strong>Recruiter</strong> = manual evaluation by the interviewer. <strong>Δ</strong> = recruiter minus AI.
+        </p>`
+            : ''
+        }
+
+        <p style="color: #64748b; font-size: 11px; line-height: 1.5; margin: 32px 0 0; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.05);">
+          ${isHire
+            ? `${escapeHtml(companyName)} or a recruiter from their team will reach out to you shortly with the next steps. Stay tuned!`
+            : `We appreciate your time and effort. Your profile remains on Arena of Coders — other companies may reach out for future opportunities.`}
+        </p>
+      </div>
+      <p style="color: #475569; font-size: 11px; text-align: center; margin-top: 16px;">
+        Sent by Arena of Coders on behalf of ${escapeHtml(companyName)}
+      </p>
+    </div>
+  `;
 }

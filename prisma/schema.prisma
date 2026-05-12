@@ -579,8 +579,16 @@ model RecruitmentMeeting {
 
   status           RecruitmentMeetingStatus @default(SCHEDULED)
 
-  // Soft-skills final score (saved when meeting ends)
+  // Soft-skills final score (saved when meeting ends — computed by the AI)
   softSkillsScore  Json?
+
+  // Recruiter's own evaluation, decision and review email status
+  // Shape of recruiterScore: { communication, empathy, confidence, leadership, adaptability, stress_management }
+  recruiterScore   Json?
+  decision         RecruitmentDecision @default(PENDING)
+  decisionNote     String?
+  reviewedAt       DateTime?
+  resultEmailedAt  DateTime?
 
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -589,4 +597,10 @@ model RecruitmentMeeting {
   @@index([candidateUserId])
   @@index([scheduledFor])
   @@index([status])
+}
+
+enum RecruitmentDecision {
+  PENDING
+  HIRE
+  REJECT
 }

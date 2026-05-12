@@ -21,6 +21,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RecruitmentMeetingService } from './recruitment-meeting.service';
 import {
   CompleteMeetingDto,
+  ReviewMeetingDto,
   ScheduleMeetingDto,
 } from './recruitment-meeting.dto';
 
@@ -94,5 +95,23 @@ export class RecruitmentMeetingController {
   @ApiOperation({ summary: 'Cancel a scheduled meeting' })
   async cancel(@Param('id') id: string, @CurrentUser('id') userId: string) {
     return this.service.cancel(id, userId);
+  }
+
+  @Post(':id/review')
+  @ApiOperation({
+    summary:
+      "Recruiter review — save recruiter's scoring + decision; optionally email the candidate",
+    description:
+      'COMPANY only. Persists the recruiter\'s per-skill score (same 0–10 scale as the AI), their decision (HIRE/REJECT) and an optional note. ' +
+      'By default an email containing the AI-vs-recruiter comparison and the verdict is sent to the candidate (`sendEmail: false` to skip).',
+  })
+  @ApiResponse({ status: 201, description: 'Review saved and (optionally) emailed' })
+  @ApiResponse({ status: 403, description: 'Only the recruiting company can submit a review' })
+  async review(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: ReviewMeetingDto,
+  ) {
+    return this.service.review(id, userId, dto);
   }
 }

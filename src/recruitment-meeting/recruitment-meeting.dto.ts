@@ -54,3 +54,46 @@ export class CompleteMeetingDto {
   @IsObject()
   softSkillsScore?: Record<string, unknown>;
 }
+
+import { IsEnum, IsBoolean } from 'class-validator';
+
+export enum RecruitmentDecisionDto {
+  HIRE = 'HIRE',
+  REJECT = 'REJECT',
+}
+
+export class ReviewMeetingDto {
+  @ApiProperty({
+    description:
+      'Recruiter\'s own soft-skills evaluation, scored on the SAME 0–10 scale ' +
+      'as the AI snapshot. Example: { communication: 8, empathy: 7, confidence: 9, ' +
+      'leadership: 6, adaptability: 8, stress_management: 7 }',
+  })
+  @IsObject()
+  recruiterScore: Record<string, number>;
+
+  @ApiProperty({
+    enum: RecruitmentDecisionDto,
+    example: 'HIRE',
+    description: 'Final decision after comparing the two scores',
+  })
+  @IsEnum(RecruitmentDecisionDto)
+  decision: RecruitmentDecisionDto;
+
+  @ApiPropertyOptional({
+    description: 'Optional comment shown to the candidate in the result email',
+  })
+  @IsOptional()
+  @IsString()
+  decisionNote?: string;
+
+  @ApiPropertyOptional({
+    example: true,
+    description:
+      'If true (default), the candidate receives the result email immediately. ' +
+      'Set to false to just persist the review without notifying.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  sendEmail?: boolean;
+}
