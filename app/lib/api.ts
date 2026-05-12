@@ -856,6 +856,8 @@ export async function joinTeamChat(
 
 export type RecruitmentMeetingStatus = 'SCHEDULED' | 'STARTED' | 'COMPLETED' | 'CANCELLED';
 
+export type RecruitmentDecision = 'PENDING' | 'HIRE' | 'REJECT';
+
 export type RecruitmentMeeting = {
   id: string;
   companyName: string;
@@ -868,6 +870,11 @@ export type RecruitmentMeeting = {
   notes?: string | null;
   status: RecruitmentMeetingStatus;
   softSkillsScore?: Record<string, number> | null;
+  recruiterScore?: Record<string, number> | null;
+  decision?: RecruitmentDecision;
+  decisionNote?: string | null;
+  reviewedAt?: string | null;
+  resultEmailedAt?: string | null;
   company?: { id: string; firstName: string; lastName: string; email: string } | null;
   candidate?: {
     id: string;
@@ -879,6 +886,38 @@ export type RecruitmentMeeting = {
   } | null;
   role?: 'COMPANY' | 'CANDIDATE';
 };
+
+export type MeetingComparison = {
+  perSkill: { skill: string; ai: number; recruiter: number; delta: number }[];
+  aiAverage: number;
+  recruiterAverage: number;
+  averageDelta: number;
+} | null;
+
+export async function reviewMeeting(
+  id: string,
+  payload: {
+    recruiterScore: Record<string, number>;
+    decision: 'HIRE' | 'REJECT';
+    decisionNote?: string;
+    sendEmail?: boolean;
+  },
+): Promise<{
+  id: string;
+  decision: RecruitmentDecision;
+  reviewedAt: string | null;
+  resultEmailedAt: string | null;
+  recruiterScore: Record<string, number> | null;
+  softSkillsScore: Record<string, number> | null;
+  comparison: MeetingComparison;
+}> {
+  const res = await request(`/recruitment-meeting/${encodeURIComponent(id)}/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return res as any;
+}
 
 export async function scheduleRecruitmentMeeting(payload: {
   candidateUserId: string;

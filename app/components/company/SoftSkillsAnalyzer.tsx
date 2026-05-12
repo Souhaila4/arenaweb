@@ -71,11 +71,10 @@ export default function SoftSkillsAnalyzer({ candidateName, onAnalysisComplete }
       formData.append("video", videoFile);
       formData.append("name", candidateName || "Candidate");
 
-      // Appel à l'API de soft skills
-      const softSkillsBase = (
-        process.env.NEXT_PUBLIC_SOFT_SKILLS_API_URL ?? "http://10.16.146.142:5000"
-      ).replace(/\/+$/, "");
-      const response = await fetch(`${softSkillsBase}/api/analyze`, {
+      // Same-origin Next proxy → Python service (configured via
+      // SOFT_SKILLS_API_URL in .env.local, default localhost:5000).
+      // Avoids mixed-content blocks when the page is served over HTTPS.
+      const response = await fetch(`/api/soft-skills/main/api/analyze`, {
         method: "POST",
         body: formData,
       });

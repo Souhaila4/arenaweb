@@ -107,10 +107,11 @@ export default function RecruitmentMeetingRoom({
             formData.append("frame", blob, "frame.jpg");
 
             try {
-              const frameApiBase = (
-                process.env.NEXT_PUBLIC_SOFT_SKILLS_FRAME_API_URL ?? "http://10.16.146.142:5001"
-              ).replace(/\/+$/, "");
-              const response = await fetch(`${frameApiBase}/api/analyze-frame`, {
+              // Always call the same-origin Next proxy. The proxy forwards
+              // server-side to the Python service (configured via
+              // SOFT_SKILLS_FRAME_API_URL in .env.local, default localhost:5001).
+              // This way an HTTPS page is not blocked by mixed-content rules.
+              const response = await fetch(`/api/soft-skills/frame/api/analyze-frame`, {
                 method: "POST",
                 body: formData,
               });
