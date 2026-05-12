@@ -141,6 +141,10 @@ model User {
   meetingsAsCompany    RecruitmentMeeting[]      @relation("MeetingsCompany")
   meetingsAsCandidate  RecruitmentMeeting[]      @relation("MeetingsCandidate")
 
+  // ───── Favorites (company ↔ talent) ─────
+  favoritesAsCompany   FavoriteUser[]            @relation("FavoriteCompany")
+  favoritedByCompanies FavoriteUser[]            @relation("FavoriteCandidate")
+
   // ───── Equipe Relations ─────
   equipeMembers        EquipeMember[]
   sentInvitations      EquipeInvitation[]        @relation("SentInvitations")
@@ -603,4 +607,24 @@ enum RecruitmentDecision {
   PENDING
   HIRE
   REJECT
+}
+
+// ─────────────────────────────────────────────────────────────────
+// FAVORITE USER  (company bookmarks a talent from the pool)
+// ─────────────────────────────────────────────────────────────────
+
+model FavoriteUser {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+
+  companyId String   @db.ObjectId
+  company   User     @relation("FavoriteCompany",   fields: [companyId], references: [id], onDelete: Cascade)
+
+  userId    String   @db.ObjectId
+  user      User     @relation("FavoriteCandidate", fields: [userId],    references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([companyId, userId])
+  @@index([companyId])
+  @@index([userId])
 }

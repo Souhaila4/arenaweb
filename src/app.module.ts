@@ -19,6 +19,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { EquipeModule } from './equipe/equipe.module';
 import { RecruitmentMeetingModule } from './recruitment-meeting/recruitment-meeting.module';
 import { BigQueryModule } from './bigquery/bigquery.module';
+import { FavoriteModule } from './favorite/favorite.module';
 import * as path from 'path';
 
 @Module({
@@ -77,6 +78,7 @@ import * as path from 'path';
     EquipeModule,
     RecruitmentMeetingModule,
     BigQueryModule,
+    FavoriteModule,
   ],
   controllers: [AppController],
   providers: [AppService],
